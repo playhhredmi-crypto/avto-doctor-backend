@@ -183,8 +183,8 @@ app.get("/orders/:id", async (req, res) => {
   try {
     const natija = await pool.query(
       `SELECT orders.*, ustalar.ism AS usta_ism, ustalar.telefon AS usta_telefon, ustalar.reyting AS usta_reyting,
-              ustalar.lat AS usta_lat, ustalar.lng AS usta_lng
-       FROM orders LEFT JOIN ustalar ON orders.usta_id = ustalar.id
+              ustalar.lat AS usta_lat, ustalar.lng AS usta_lng, users.telefon AS mijoz_telefon, users.ism AS mijoz_ism
+       FROM orders LEFT JOIN ustalar ON orders.usta_id = ustalar.id LEFT JOIN users ON orders.user_id = users.id
        WHERE orders.id = $1`,
       [req.params.id]
     );
@@ -238,13 +238,43 @@ app.post("/auth", async (req, res) => {
 
 // Mijoz o'z profilini tahrirlaydi (ism, rasm)
 app.patch("/users/:id", async (req, res) => {
-  const { ism, rasm } = req.body;
+  const { ism, rasm, kartaRaqami } = req.body;
   try {
     const natija = await pool.query(
-      "UPDATE users SET ism = COALESCE($1, ism), rasm = COALESCE($2, rasm) WHERE id = $3 RETURNING *",
-      [ism, rasm, req.params.id]
+      "UPDATE users SET ism = COALESCE($1, ism), rasm = COALESCE($2, rasm), karta_raqami = COALESCE($3, karta_raqami) WHERE id = $4 RETURNING *",
+      [ism, rasm, kartaRaqami, req.params.id]
     );
     if (natija.rows.length === 0) return res.status(404).json({ xato: "Bunday mijoz topilmadi" });
+    res.json(natija.rows[0]);
+  } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi" }); }
+});
+
+// Global sozlamalar — naqt/karta to'lov turlarini yoqish/o'chirish (admin boshqaradi)
+app.get("/sozlamalar", async (req, res) => {
+  try {
+    const natija = await pool.query("SELECT naqt_yoqilgan, karta_yoqilgan FROM sozlamalar WHERE id = 1");
+    res.json(natija.rows[0] || { naqt_yoqilgan: true, karta_yoqilgan: true });
+  } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi" }); }
+});
+
+app.patch("/sozlamalar", async (req, res) => {
+  const { naqtYoqilgan, kartaYoqilgan } = req.body;
+  try {
+    const natija = await pool.query(
+      "UPDATE sozlamalar SET naqt_yoqilgan = COALESCE($1, naqt_yoqilgan), karta_yoqilgan = COALESCE($2, karta_yoqilgan) WHERE id = 1 RETURNING *",
+      [naqtYoqilgan, kartaYoqilgan]
+    );
+    res.json(natija.rows[0]);
+  } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi" }); }
+});
+
+// Buyurtma uchun tanlangan to'lov turini saqlash
+app.patch("/orders/:id/tolov-turi", async (req, res) => {
+  const { tolovTuri } = req.body;
+  if (!["naqt", "karta"].includes(tolovTuri)) return res.status(400).json({ xato: "tolovTuri noto'g'ri" });
+  try {
+    const natija = await pool.query("UPDATE orders SET tolov_turi = $1 WHERE id = $2 RETURNING *", [tolovTuri, req.params.id]);
+    if (natija.rows.length === 0) return res.status(404).json({ xato: "Bunday buyurtma topilmadi" });
     res.json(natija.rows[0]);
   } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi" }); }
 });

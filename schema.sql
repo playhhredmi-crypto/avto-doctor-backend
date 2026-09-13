@@ -82,3 +82,15 @@ CREATE TABLE IF NOT EXISTS pul_sorovlari (
   holati VARCHAR(20) NOT NULL DEFAULT 'kutilmoqda',
   yaratilgan_vaqt TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- ===== TO'LOV TIZIMI (naqt / karta) =====
+ALTER TABLE users ADD COLUMN IF NOT EXISTS karta_raqami VARCHAR(30);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS tolov_turi VARCHAR(10);
+
+CREATE TABLE IF NOT EXISTS sozlamalar (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  naqt_yoqilgan BOOLEAN NOT NULL DEFAULT true,
+  karta_yoqilgan BOOLEAN NOT NULL DEFAULT true,
+  CONSTRAINT bitta_qator CHECK (id = 1)
+);
+INSERT INTO sozlamalar (id, naqt_yoqilgan, karta_yoqilgan) VALUES (1, true, true) ON CONFLICT (id) DO NOTHING;

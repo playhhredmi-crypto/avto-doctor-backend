@@ -177,6 +177,22 @@ app.post("/orders/:id/taklif", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi" }); }
 });
 
+// Bitta buyurtmaning to'liq holatini olish — mijoz tomonida "usta topildimi" ni tekshirish uchun
+// (bevosita "Qabul qilish" orqali tayinlangan bo'lsa ham, narx taklif orqali bo'lsa ham ishlaydi)
+app.get("/orders/:id", async (req, res) => {
+  try {
+    const natija = await pool.query(
+      `SELECT orders.*, ustalar.ism AS usta_ism, ustalar.telefon AS usta_telefon, ustalar.reyting AS usta_reyting,
+              ustalar.lat AS usta_lat, ustalar.lng AS usta_lng
+       FROM orders LEFT JOIN ustalar ON orders.usta_id = ustalar.id
+       WHERE orders.id = $1`,
+      [req.params.id]
+    );
+    if (natija.rows.length === 0) return res.status(404).json({ xato: "Bunday buyurtma topilmadi" });
+    res.json(natija.rows[0]);
+  } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi" }); }
+});
+
 app.get("/orders/:id/takliflar", async (req, res) => {
   try {
     const natija = await pool.query(

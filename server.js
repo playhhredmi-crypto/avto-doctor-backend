@@ -6,6 +6,35 @@ app.use(cors());
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
+// Firebase Admin — push-xabar (bildirishnoma) yuborish uchun. Agar sozlanmagan bo'lsa,
+// tizim buni jimgina o'tkazib yuboradi (push ishlamaydi, lekin qolgan hammasi ishlaydi).
+let firebaseAdmin = null;
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  try {
+    const admin = require("firebase-admin");
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    firebaseAdmin = admin;
+    console.log("Firebase Admin ulandi — push-xabarlar yoqilgan ✅");
+  } catch (err) {
+    console.error("Firebase Admin sozlashda xato:", err.message);
+  }
+}
+
+async function pushYuborish(token, sarlavha, matn, malumot) {
+  if (!firebaseAdmin || !token) return;
+  try {
+    await firebaseAdmin.messaging().send({
+      token,
+      notification: { title: sarlavha, body: matn },
+      data: malumot || {},
+      android: { priority: "high" },
+    });
+  } catch (err) {
+    console.error("Push yuborishda xato:", err.message);
+  }
+}
+
 app.get("/", (req, res) => res.send("Avto Doctor backend ishlayapti ✅ (PostgreSQL bilan ulangan)"));
 
 app.post("/orders", async (req, res) => {
@@ -28,7 +57,24 @@ app.post("/orders", async (req, res) => {
       `INSERT INTO orders (xizmat_turi, izoh, holati, user_id, narx, mijoz_narx, lat, lng, km, viloyat) VALUES ($1, $2, 'kutilmoqda', $3, $4, $4, $5, $6, $7, $8) RETURNING *`,
       [xizmatTuri, izoh || "", userId, yakuniyNarx, lat || null, lng || null, km || null, viloyat || "Toshkent"]
     );
-    res.status(201).json(natija.rows[0]);
+    const yaratilganBuyurtma = natija.rows[0];
+
+    // Shu viloyatdagi faol (liniyadagi) ustalarga push-xabar yuboramiz
+    if (firebaseAdmin) {
+      pool.query(
+        "SELECT fcm_token FROM ustalar WHERE faol = true AND bloklangan = false AND viloyat = $1 AND fcm_token IS NOT NULL",
+        [yaratilganBuyurtma.viloyat]
+      ).then(ustalarNatija => {
+        ustalarNatija.rows.forEach(u => {
+          pushYuborish(u.fcm_token, "Yangi buyurtma!", `${xizmatTuri} — ${izoh || ''}`.trim(), {
+            turi: "yangi_buyurtma",
+            orderId: String(yaratilganBuyurtma.id),
+          });
+        });
+      }).catch(err => console.error("Push uchun ustalarni olishda xato:", err.message));
+    }
+
+    res.status(201).json(yaratilganBuyurtma);
   } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi: buyurtma yaratilmadi" }); }
 });
 
@@ -332,6 +378,25 @@ app.patch("/ustalar/:id/tolov", async (req, res) => {
     const natija = await pool.query("UPDATE ustalar SET balans = 0 WHERE id = $1 RETURNING *", [req.params.id]);
     if (natija.rows.length === 0) return res.status(404).json({ xato: "Bunday usta topilmadi" });
     res.json({ xabar: "To'lov amalga oshirildi", usta: natija.rows[0] });
+  } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi" }); }
+});
+
+// Ustaning joriy holatini (faol/band, bloklangan va h.k.) olish — sahifa qayta ochilganda holatni tiklash uchun
+app.get("/ustalar/:id/holat", async (req, res) => {
+  try {
+    const natija = await pool.query("SELECT id, faol, bloklangan, viloyat FROM ustalar WHERE id = $1", [req.params.id]);
+    if (natija.rows.length === 0) return res.status(404).json({ xato: "Bunday usta topilmadi" });
+    res.json(natija.rows[0]);
+  } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi" }); }
+});
+
+// Usta telefonining push-xabar tokenini saqlash (ekran o'chiq/fon holatida ham bildirishnoma kelishi uchun)
+app.patch("/ustalar/:id/fcm-token", async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ xato: "token kiritilishi shart" });
+  try {
+    await pool.query("UPDATE ustalar SET fcm_token = $1 WHERE id = $2", [token, req.params.id]);
+    res.json({ ok: true });
   } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi" }); }
 });
 

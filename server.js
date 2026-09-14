@@ -38,7 +38,7 @@ async function pushYuborish(token, sarlavha, matn, malumot) {
 app.get("/", (req, res) => res.send("Avto Doctor backend ishlayapti ✅ (PostgreSQL bilan ulangan)"));
 
 app.post("/orders", async (req, res) => {
-  const { telefon, xizmatTuri, izoh, narx, lat, lng, km, viloyat } = req.body;
+  const { telefon, xizmatTuri, izoh, narx, lat, lng, km, viloyat, rasm } = req.body;
   if (!telefon || !xizmatTuri) return res.status(400).json({ xato: "telefon va xizmatTuri kiritilishi shart" });
   try {
     let mijoz = await pool.query("SELECT * FROM users WHERE telefon = $1", [telefon]);
@@ -54,8 +54,8 @@ app.post("/orders", async (req, res) => {
       }
     }
     const natija = await pool.query(
-      `INSERT INTO orders (xizmat_turi, izoh, holati, user_id, narx, mijoz_narx, lat, lng, km, viloyat) VALUES ($1, $2, 'kutilmoqda', $3, $4, $4, $5, $6, $7, $8) RETURNING *`,
-      [xizmatTuri, izoh || "", userId, yakuniyNarx, lat || null, lng || null, km || null, viloyat || "Toshkent"]
+      `INSERT INTO orders (xizmat_turi, izoh, holati, user_id, narx, mijoz_narx, lat, lng, km, viloyat, rasm) VALUES ($1, $2, 'kutilmoqda', $3, $4, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [xizmatTuri, izoh || "", userId, yakuniyNarx, lat || null, lng || null, km || null, viloyat || "Toshkent", rasm || null]
     );
     const yaratilganBuyurtma = natija.rows[0];
 
@@ -337,11 +337,11 @@ app.patch("/ustalar/:id/faol", async (req, res) => {
 
 // Usta o'z profilini tahrirlaydi (ism, mutaxassislik, rasm)
 app.patch("/ustalar/:id/profil", async (req, res) => {
-  const { ism, mutaxassislik, rasm } = req.body;
+  const { ism, mutaxassislik, rasm, kartaRaqami, ishRadiusiKm } = req.body;
   try {
     const natija = await pool.query(
-      "UPDATE ustalar SET ism = COALESCE($1, ism), mutaxassislik = COALESCE($2, mutaxassislik), rasm = COALESCE($3, rasm) WHERE id = $4 RETURNING *",
-      [ism, mutaxassislik, rasm, req.params.id]
+      "UPDATE ustalar SET ism = COALESCE($1, ism), mutaxassislik = COALESCE($2, mutaxassislik), rasm = COALESCE($3, rasm), karta_raqami = COALESCE($4, karta_raqami), ish_radiusi_km = COALESCE($5, ish_radiusi_km) WHERE id = $6 RETURNING *",
+      [ism, mutaxassislik, rasm, kartaRaqami, ishRadiusiKm, req.params.id]
     );
     if (natija.rows.length === 0) return res.status(404).json({ xato: "Bunday usta topilmadi" });
     res.json(natija.rows[0]);

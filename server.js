@@ -3,7 +3,7 @@ const cors = require("cors");
 const pool = require("./db");
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 const PORT = process.env.PORT || 3000;
 
 // Firebase Admin — push-xabar (bildirishnoma) yuborish uchun. Agar sozlanmagan bo'lsa,
@@ -137,9 +137,24 @@ app.patch("/orders/:id/bekor-qilish", async (req, res) => {
   try {
     const b = await pool.query("SELECT * FROM orders WHERE id = $1", [req.params.id]);
     if (b.rows.length === 0) return res.status(404).json({ xato: "Bunday buyurtma topilmadi" });
-    if (b.rows[0].holati === "bajarildi") return res.status(400).json({ xato: "Bajarilgan buyurtmani bekor qilib bo'lmaydi" });
-    const natija = await pool.query("UPDATE orders SET holati = 'bekor_qilindi' WHERE id = $1 RETURNING *", [req.params.id]);
-    res.json(natija.rows[0]);
+    const order = b.rows[0];
+    if (order.holati === "bajarildi") return res.status(400).json({ xato: "Bajarilgan buyurtmani bekor qilib bo'lmaydi" });
+
+    // Bekor qilish siyosati: usta allaqachon yo'lga chiqqan bo'lsa (holati='yolda'),
+    // mijoz kichik jarima to'laydi — bu ustaning bekorga sarflagan vaqti/yo'liga kompensatsiya.
+    let jarima = 0;
+    if (order.holati === "yolda" && order.usta_id) {
+      jarima = Math.round(Number(order.narx || 0) * 0.1); // narxning 10%i, ustaga o'tadi
+      if (jarima > 0) {
+        await pool.query("UPDATE ustalar SET balans = balans + $1 WHERE id = $2", [jarima, order.usta_id]);
+      }
+    }
+
+    const natija = await pool.query(
+      "UPDATE orders SET holati = 'bekor_qilindi', bekor_jarima = $1 WHERE id = $2 RETURNING *",
+      [jarima, req.params.id]
+    );
+    res.json({ ...natija.rows[0], jarima });
   } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi" }); }
 });
 
@@ -447,12 +462,33 @@ app.patch("/ustalar/:id/fcm-token", async (req, res) => {
 });
 
 app.get("/ustalar/mavjud-buyurtmalar", async (req, res) => {
-  const { viloyat } = req.query;
+  const { viloyat, ustaId } = req.query;
   try {
-    const natija = viloyat
+    let natija = viloyat
       ? await pool.query("SELECT * FROM orders WHERE holati = 'kutilmoqda' AND viloyat = $1 ORDER BY yaratilgan_vaqt ASC", [viloyat])
       : await pool.query("SELECT * FROM orders WHERE holati = 'kutilmoqda' ORDER BY yaratilgan_vaqt ASC");
-    res.json(natija.rows);
+    let buyurtmalar = natija.rows;
+
+    // Agar usta o'z ishlash radiusini belgilagan bo'lsa, faqat shu masofadagi buyurtmalarni ko'rsatamiz
+    if (ustaId) {
+      const ustaNatija = await pool.query("SELECT lat, lng, ish_radiusi_km FROM ustalar WHERE id = $1", [ustaId]);
+      const usta = ustaNatija.rows[0];
+      if (usta && usta.lat && usta.lng && usta.ish_radiusi_km) {
+        const R = 6371;
+        const masofani = (lat1, lng1, lat2, lng2) => {
+          const dLat = (lat2 - lat1) * Math.PI / 180;
+          const dLng = (lng2 - lng1) * Math.PI / 180;
+          const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+          return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        };
+        buyurtmalar = buyurtmalar.filter(b => {
+          if (!b.lat || !b.lng) return true; // manzili yo'q buyurtmalarni chetlab o'tmaymiz
+          return masofani(Number(usta.lat), Number(usta.lng), Number(b.lat), Number(b.lng)) <= Number(usta.ish_radiusi_km);
+        });
+      }
+    }
+
+    res.json(buyurtmalar);
   } catch (err) { console.error(err); res.status(500).json({ xato: "Server xatosi" }); }
 });
 

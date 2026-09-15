@@ -3,7 +3,7 @@ const cors = require("cors");
 const pool = require("./db");
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 const PORT = process.env.PORT || 3000;
 
 // Firebase Admin — push-xabar (bildirishnoma) yuborish uchun. Agar sozlanmagan bo'lsa,
